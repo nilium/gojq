@@ -541,11 +541,16 @@ func indexObjectFieldOrMethod(raw interface{}, x string) interface{} {
 	return &expected
 }
 
-func matchesTag(x string, f reflect.StructField) bool {
+func jsonFieldName(f reflect.StructField) string {
 	tag := f.Tag.Get("json")
 	if i := strings.IndexByte(tag, ','); i > -1 {
 		tag = tag[:i]
 	}
+	return tag
+}
+
+func matchesTag(x string, f reflect.StructField) bool {
+	tag := jsonFieldName(f)
 	if tag == "" {
 		return strings.EqualFold(x, f.Name)
 	} else if tag == "-" {

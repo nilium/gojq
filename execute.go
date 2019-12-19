@@ -201,8 +201,76 @@ loop:
 					return xs[i][0].(string) < xs[j][0].(string)
 				})
 			default:
-				err = &iteratorError{v}
-				break loop
+				rv := reflect.ValueOf(v)
+				if !rv.IsValid() {
+					err = &iteratorError{v}
+					break loop
+				}
+
+				switch rv.Kind() {
+				case reflect.Slice:
+					n := rv.Len()
+					xs = make([][2]interface{}, n)
+					for i := 0; i < n; i++ {
+						iv := rv.Index(i)
+						if !iv.IsValid() || !iv.CanInterface() {
+							err = &iteratorError{v}
+							break loop
+						}
+						iface := iv.Interface()
+						xs[i] = [2]interface{}{i, iface}
+					}
+
+				case reflect.Map:
+					iter := rv.MapRange()
+					xs = make([][2]interface{}, 0, rv.Len())
+					for i := 0; iter.Next(); i++ {
+						iv := iter.Value()
+						if !iv.CanInterface() {
+							continue
+						}
+						ik := iter.Key()
+						k := ik.Convert(reflectStringType).String()
+						v := iv.Interface()
+						xs = append(xs, [2]interface{}{k, v})
+					}
+					sort.Slice(xs, func(i, j int) bool {
+						return xs[i][0].(string) < xs[j][0].(string)
+					})
+
+				case reflect.Struct:
+					rt := rv.Type()
+					nf := rt.NumField()
+					xs = make([][2]interface{}, 0, nf)
+					for i := 0; i < nf; i++ {
+						ft := rt.Field(i)
+						if ft.PkgPath == "" {
+							continue
+						}
+
+						k := jsonFieldName(ft)
+						if k == "-" {
+							continue
+						} else if k == "" {
+							k = ft.Name
+						}
+
+						fv := rv.FieldByIndex(ft.Index)
+						if !fv.IsValid() || !fv.CanInterface() {
+							continue
+						}
+
+						v := fv.Interface()
+						xs = append(xs, [2]interface{}{k, v})
+					}
+					sort.Slice(xs, func(i, j int) bool {
+						return xs[i][0].(string) < xs[j][0].(string)
+					})
+
+				default:
+					err = &iteratorError{v}
+					break loop
+				}
 			}
 			if len(xs) > 1 {
 				env.push(xs[1:])
