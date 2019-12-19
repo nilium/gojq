@@ -589,7 +589,20 @@ func funcIndex(_, v, x interface{}) interface{} {
 				panic(v)
 			}
 		default:
-			return &expectedArrayError{v}
+			rv := reflect.ValueOf(v)
+			if rv.Kind() != reflect.Slice {
+				return &expectedArrayError{v}
+			}
+
+			s := make([]interface{}, rv.Len())
+			for i := range s {
+				iv := rv.Index(i)
+				if !iv.CanInterface() {
+					return &expectedArrayError{v}
+				}
+				s[i] = iv.Interface()
+			}
+			return funcIndexSlice(nil, nil, &idx, s)
 		}
 	case []interface{}:
 		switch v := v.(type) {
