@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/big"
 	"os"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -481,6 +482,78 @@ func funcFromJSON(v interface{}) interface{} {
 	}
 }
 
+var reflectStringType = reflect.TypeOf("")
+var reflectErrorType = reflect.TypeOf(error(nil))
+
+func indexObjectFieldOrMethod(raw interface{}, x string) interface{} {
+	v := reflect.ValueOf(raw)
+	t := v.Type()
+
+	if t.Kind() == reflect.Map && reflectStringType.ConvertibleTo(t.Key()) {
+		key := reflect.ValueOf(x).Convert(t.Key())
+		elem := v.MapIndex(key)
+		if !elem.IsValid() || !elem.CanInterface() {
+			return reflect.Zero(t.Key()).Interface()
+		}
+		return elem.Interface()
+	}
+
+	expected := expectedObjectError{v.Interface()}
+	if x == "" || t.Kind() != reflect.Struct {
+		return &expected
+	}
+
+	method, ok := t.MethodByName(x)
+	if ok && method.PkgPath == "" {
+		mt := method.Type
+		// Only support niladic methods that return a single value.
+		if mt.NumIn() != 0 || mt.NumOut() != 1 {
+			return &expected
+		}
+
+		// Do not call methods that only return an error.
+		if mt.Out(0) == reflectErrorType {
+			return &expected
+		}
+
+		m := v.Method(method.Index)
+		res := m.Call(nil)[0]
+		if !res.IsValid() || !res.CanInterface() {
+			return &expected
+		}
+		return res.Interface()
+	}
+
+	for fi := 0; fi < t.NumField(); fi++ {
+		f := t.Field(fi)
+		if f.PkgPath == "" || !matchesTag(x, f) {
+			continue
+		}
+
+		fv := v.FieldByIndex(f.Index)
+		if !fv.IsValid() || !fv.CanInterface() {
+			return &expected
+		}
+
+		return fv.Interface()
+	}
+
+	return &expected
+}
+
+func matchesTag(x string, f reflect.StructField) bool {
+	tag := f.Tag.Get("json")
+	if i := strings.IndexByte(tag, ','); i > -1 {
+		tag = tag[:i]
+	}
+	if tag == "" {
+		return strings.EqualFold(x, f.Name)
+	} else if tag == "-" {
+		return false
+	}
+	return x == tag
+}
+
 func funcIndex(_, v, x interface{}) interface{} {
 	switch x := x.(type) {
 	case string:
@@ -490,7 +563,7 @@ func funcIndex(_, v, x interface{}) interface{} {
 		case map[string]interface{}:
 			return v[x]
 		default:
-			return &expectedObjectError{v}
+			return indexObjectFieldOrMethod(v, x)
 		}
 	case int, float64, *big.Int:
 		idx, _ := toInt(x)
