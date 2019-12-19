@@ -3,6 +3,7 @@ package gojq
 import (
 	"math"
 	"math/big"
+	"reflect"
 	"strings"
 )
 
@@ -332,7 +333,7 @@ func funcOpAdd(_, l, r interface{}) interface{} {
 		func(l, r float64) interface{} { return l + r },
 		func(l, r *big.Int) interface{} { return new(big.Int).Add(l, r) },
 		func(l, r string) interface{} { return l + r },
-		func(l, r []interface{}) interface{} { return append(l, r...) },
+		func(l, r []interface{}) interface{} { return append(append([]interface{}(nil), l...), r...) },
 		func(l, r map[string]interface{}) interface{} {
 			m := make(map[string]interface{})
 			for k, v := range l {
@@ -343,7 +344,54 @@ func funcOpAdd(_, l, r interface{}) interface{} {
 			}
 			return m
 		},
-		func(l, r interface{}) interface{} { return &binopTypeError{"add", l, r} },
+		func(l, r interface{}) interface{} {
+			lv, rv := reflect.ValueOf(l), reflect.ValueOf(r)
+			k := lv.Kind()
+			if k != rv.Kind() {
+				return &binopTypeError{"add", l, r}
+			}
+
+			switch k {
+			case reflect.Slice:
+				s := make([]interface{}, 0, lv.Len()+rv.Len())
+				merge := func(in reflect.Value) {
+					n := in.Len()
+					for i := 0; i < n; i++ {
+						iv := in.Index(i)
+						if !iv.IsValid() || !iv.CanInterface() {
+							continue
+						}
+						s = append(s, iv.Interface())
+					}
+				}
+				merge(lv)
+				merge(rv)
+				return s
+
+			case reflect.Map:
+				if !lv.Type().Key().ConvertibleTo(reflectStringType) || !rv.Type().Key().ConvertibleTo(reflectStringType) {
+					return &binopTypeError{"add", l, r}
+				}
+				m := make(map[string]interface{})
+				merge := func(in reflect.Value) {
+					for it := in.MapRange(); it.Next(); {
+						iv := it.Value()
+						if !iv.IsValid() || !iv.CanInterface() {
+							continue
+						}
+						k := it.Key().Convert(reflectStringType).String()
+						v := iv.Interface()
+						m[k] = v
+					}
+				}
+				merge(lv)
+				merge(rv)
+				return m
+
+			default:
+				return &binopTypeError{"add", l, r}
+			}
+		},
 	)
 }
 
